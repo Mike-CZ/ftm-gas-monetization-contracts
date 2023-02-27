@@ -1,0 +1,20 @@
+networks:
+    default: development
+
+dependencies:
+    - OpenZeppelin/openzeppelin-contracts@4.8.1
+compiler:
+    solc:
+        version: 0.8.19
+        remappings:
+            - "openzeppelin=OpenZeppelin/openzeppelin-contracts@4.8.1"
+
+reports:
+    exclude_contracts:
+        - ERC20
+        - Ownable
+        - Context
+        - ERC721
+        - ERC721URIStorage
+
+autofetch_sources: true

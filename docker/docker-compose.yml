@@ -1,0 +1,27 @@
+networks:
+  gas_monetization_contracts_network:
+    driver: bridge
+
+services:
+  ganache-cli:
+    build:
+      context: ./ganache-cli
+    environment:
+      - CUSTOM_START_PARAMS=${GANACHE_START_PARAMS:-""}
+    ports:
+      - 127.0.0.1:${GANACHE_HOST_PORT:-8545}:8545
+    networks:
+      - gas_monetization_contracts_network
+  brownie:
+    build:
+      context: ./brownie
+    environment:
+      - DISPLAY=$DISPLAY # for X11 forwarding
+    volumes:
+      - ../:/home/user/gas-monetization
+      - ./.data/brownie:/home/user/.brownie
+      - ./.data/solc:/home/user/.solc
+      - ./.data/solcx:/home/user/.solcx
+      - /tmp/.X11-unix:/tmp/.X11-unix # for X11 forwarding
+    networks:
+      - gas_monetization_contracts_network
