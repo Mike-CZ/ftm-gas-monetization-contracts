@@ -30,4 +30,3 @@ create_symlink()
 }
 
 create_symlink "$OPEN_ZEPPELIN_DATA_PATH/openzeppelin-contracts@$OPEN_ZEPPELIN_VERSION" "openzeppelin"
-create_symlink "$OPEN_ZEPPELIN_DATA_PATH/openzeppelin-contracts-upgradeable@$OPEN_ZEPPELIN_VERSION" "openzeppelin-upgradeable"
