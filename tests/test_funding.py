@@ -65,7 +65,7 @@ def test_funds_can_be_withdrawn(
 ) -> None:
     initial_contract_balance = gas_monetization.balance()
     initial_recipient_balance = recipient.balance()
-    tx = gas_monetization.withdrawFunds(1_000, recipient, {'from': funds_manager})
+    tx = gas_monetization.withdrawFunds(recipient, 1_000, {'from': funds_manager})
     assert tx.events['FundsWithdrawn'] is not None
     assert tx.events['FundsWithdrawn']['recipient'] == recipient
     assert tx.events['FundsWithdrawn']['amount'] == 1_000
@@ -83,7 +83,7 @@ def test_non_fund_manager_cannot_withdraw(
     if non_funds_manager.address == funds_manager.address:
         return
     with reverts():
-        gas_monetization.withdrawFunds(1_000, non_funds_manager, {'from': non_funds_manager})
+        gas_monetization.withdrawFunds(non_funds_manager, 1_000, {'from': non_funds_manager})
 
 
 @given(recipient=strategy('address'))
