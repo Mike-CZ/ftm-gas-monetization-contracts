@@ -70,7 +70,7 @@ contract GasMonetization is AccessControl {
     }
 
     /**
-    * @notice Get project metadata uri.
+    * @notice Get project contracts.
     * @param owner Address of project owner.
     */
     function getProjectContracts(address owner) public view returns(address[] memory) {
