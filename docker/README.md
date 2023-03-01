@@ -1,7 +1,6 @@
 # Setup guide
 
-First, make sure to have [Docker](https://docs.docker.com/get-started/) (>=20.04) 
-and [Docker Compose](https://docs.docker.com/compose/install/) (>=1.29.2) installed.
+First, make sure to have [Docker](https://docs.docker.com/get-started/) (>=23.0).
 
 ### Create .env file inside docker directory
 ```bash

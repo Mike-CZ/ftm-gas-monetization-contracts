@@ -5,7 +5,7 @@ from brownie.network.account import LocalAccount
 from hypothesis import settings
 
 
-def test_funder_can_fund_contract(
+def test_contract_can_be_funded(
         gas_monetization: ProjectContract,
         funder: LocalAccount
 ) -> None:
@@ -32,7 +32,7 @@ def test_non_funder_cannot_fund_contract(
         gas_monetization.addFunds({'from': non_funder, 'amount': 1_000})
 
 
-def test_funder_can_fund_contract_via_transfer(
+def test_contract_can_be_funded_via_transfer(
         gas_monetization: ProjectContract,
         funder: LocalAccount
 ) -> None:
@@ -45,7 +45,7 @@ def test_funder_can_fund_contract_via_transfer(
 
 @given(non_funder=strategy('address'))
 @settings(max_examples=10)
-def test_non_funder_cannot_fund_via_transfer(
+def test_non_funder_cannot_fund_contract_via_transfer(
         gas_monetization: ProjectContract,
         funder: LocalAccount,
         non_funder: LocalAccount
