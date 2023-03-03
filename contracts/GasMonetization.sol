@@ -17,6 +17,17 @@ contract GasMonetization is AccessControl {
     event ProjectContractRemoved(address indexed owner, address indexed contractAddress);
     event ProjectContractsSet(address indexed owner, address[] contracts);
     event ProjectMetadataUriUpdated(address indexed owner, string metadataUri);
+    event WithdrawalRequested(address indexed owner, uint256 blockNumber);
+    event WithdrawalCanceled(address indexed owner, uint256 blockNumber);
+    event WithdrawalCompleted(address indexed owner, uint256 blockNumber, uint256 amount);
+    event WithdrawalBlockLimitUpdated(uint256 limit);
+    event WithdrawalConfirmationsLimitUpdated(uint256 limit);
+    event WithdrawalConfirmationsDeviationUpdated(uint256 limit);
+    event ContractDeployed(
+        uint256 withdrawalBlocksFrequencyLimit,
+        uint256 confirmationsToMakeWithdrawal,
+        uint256 allowedConfirmationsDeviation
+    );
 
     /**
     * @notice Accounts with this role are eligible to fund this contract.
@@ -33,56 +44,149 @@ contract GasMonetization is AccessControl {
     bytes32 public constant PROJECTS_MANAGER_ROLE = keccak256("PROJECTS_MANAGER");
 
     /**
+    * @notice Accounts with this role are eligible to provide data related to rewards withdrawals.
+    */
+    bytes32 public constant REWARDS_DATA_PROVIDER_ROLE = keccak256("REWARDS_DATA_PROVIDER");
+
+    /**
     * @notice Project represents a project that is eligible to receive funds. This structure consists
     * of project's metadata uri and all related contracts, which will be used to calculate rewards.
     */
     struct Project {
         string metadataUri;
-        uint256 lastWithdrawnEpoch;
+        uint256 lastWithdrawalBlock;
         address[] contracts;
     }
 
     /**
     * @notice Registry of projects implemented as "project owner address" => "project" mapping.
     */
-    mapping(address => Project) private _projects;
-
+    mapping(address => Project) internal _projects;
 
     /**
     * @notice Registry of contracts and owners implemented as "contract address" => "contract owner address" mapping.
     */
-    mapping(address => address) private _contracts_owners;
+    mapping(address => address) internal _contracts_owners;
+
+    /**
+    * @notice Last block id when contract was funded.
+    */
+    uint256 internal _last_block_funds_added = 0;
+
+    /**
+    * @notice Restricts withdrawals frequency by specified blocks number.
+    */
+    uint256 internal _withdrawal_blocks_frequency_limit;
+
+    /**
+    * @notice Number of confirmations to complete withdrawal.
+    */
+    uint256 internal _confirmations_to_make_withdrawal;
+
+    /**
+    * @notice Number of allowed deviated confirmations. When this number is exceeded, request is closed.
+    */
+    uint256 internal _allowed_confirmations_deviation;
+
+    /**
+    * @notice PendingWithdrawalRequest represents a pending withdrawal of a project.
+    */
+    struct PendingWithdrawalRequest {
+        uint256 requestedOnBlock;
+        uint256 receivedConfirmationsCount;
+        // Mapping of received confirmations implemented as "value to pay" => "number of confirmations"
+        mapping(uint256 => uint256) confirmations;
+        // Mapping of confirmation providers to avoid confirming by single address, "provider address" => "has provided"
+        mapping(address => bool) providers;
+    }
+
+    /**
+    * @notice Registry of pending withdrawals implemented as "project owner address" => "pending withdrawal" mapping.
+    */
+    mapping(address => PendingWithdrawalRequest) private _pending_withdrawals;
 
     /**
     * @notice Contract constructor. It assigns to the creator admin role. Addresses with `DEFAULT_ADMIN_ROLE`
     * are eligible to grant and revoke memberships in particular roles.
+    * @param withdrawalBlocksFrequencyLimit Limits how often withdrawals can be done.
+    * @param confirmationsToMakeWithdrawal Number of confirmations to process withdrawal.
+    * @param allowedConfirmationsDeviation Allowed deviation of different confirmations.
     */
-    constructor() public {
+    constructor(
+        uint256 withdrawalBlocksFrequencyLimit,
+        uint256 confirmationsToMakeWithdrawal,
+        uint256 allowedConfirmationsDeviation
+    ) public {
+        _withdrawal_blocks_frequency_limit = withdrawalBlocksFrequencyLimit;
+        _confirmations_to_make_withdrawal = confirmationsToMakeWithdrawal;
+        _allowed_confirmations_deviation = allowedConfirmationsDeviation;
         _grantRole(DEFAULT_ADMIN_ROLE, _msgSender());
+        emit ContractDeployed(
+            withdrawalBlocksFrequencyLimit,
+            confirmationsToMakeWithdrawal,
+            allowedConfirmationsDeviation
+        );
     }
 
     /**
-    * @notice Get project metadata uri.
-    * @param owner Address of project owner.
+    * @notice Check owner has pending withdrawal on given block id.
     */
-    function getProjectMetadataUri(address owner) public view returns(string memory) {
-        return _projects[owner].metadataUri;
+    function hasPendingWithdrawal(address owner, uint256 blockId) public view returns(bool) {
+        return _pending_withdrawals[owner].requestedOnBlock == blockId;
     }
 
     /**
-    * @notice Get project contracts.
-    * @param owner Address of project owner.
+    * @notice Request withdrawal. Only project owner can request.
     */
-    function getProjectContracts(address owner) public view returns(address[] memory) {
-        return _projects[owner].contracts;
+    function requestWithdrawal() public {
+        require(bytes(_projects[_msgSender()].metadataUri).length > 0, "GasMonetization: not project owner");
+        uint256 lastProjectWithdrawal = _projects[_msgSender()].lastWithdrawalBlock;
+        uint256 lastPendingWithdrawal = _pending_withdrawals[_msgSender()].requestedOnBlock;
+        require(
+            _last_block_funds_added > 0
+            && lastProjectWithdrawal < _last_block_funds_added
+            && block.number - lastProjectWithdrawal > _withdrawal_blocks_frequency_limit
+            && block.number - lastPendingWithdrawal > _withdrawal_blocks_frequency_limit,
+            "GasMonetization: must wait to withdraw"
+        );
+        // cancel pending withdrawal
+        if (lastPendingWithdrawal > 0) {
+            emit WithdrawalCanceled(_msgSender(), lastPendingWithdrawal);
+            delete _pending_withdrawals[_msgSender()];
+        }
+        // prepare new withdrawal
+        _pending_withdrawals[_msgSender()].requestedOnBlock = block.number;
+        emit WithdrawalRequested(_msgSender(), block.number);
     }
 
     /**
-    * @notice Get contract project owner address.
-    * @param contractAddress Address of contract.
+    * @notice Complete withdrawal.
     */
-    function getContractProjectOwner(address contractAddress) public view returns(address) {
-        return _contracts_owners[contractAddress];
+    function completeWithdrawal(address payable owner, uint256 blockNumber, uint256 amount) public {
+        require(hasRole(REWARDS_DATA_PROVIDER_ROLE, _msgSender()), "GasMonetization: not rewards data provider");
+        require(hasPendingWithdrawal(owner, blockNumber), "GasMonetization: no withdrawal request");
+        PendingWithdrawalRequest storage request = _pending_withdrawals[owner];
+        require(!request.providers[_msgSender()], "GasMonetization: already confirmed");
+        // record received confirmation and mark provider
+        request.receivedConfirmationsCount++;
+        request.confirmations[amount]++;
+        request.providers[_msgSender()] = true;
+        // make withdrawal when confirmations threshold is reached
+        if (request.confirmations[amount] >= _confirmations_to_make_withdrawal) {
+            delete _pending_withdrawals[owner];
+            _projects[owner].lastWithdrawalBlock = block.number;
+            owner.sendValue(amount);
+            emit WithdrawalCompleted(owner, blockNumber, amount);
+            return;
+        }
+        // cancel withdrawal if wee got too many incorrect confirmations
+        if (
+            request.receivedConfirmationsCount > _confirmations_to_make_withdrawal
+            && request.receivedConfirmationsCount - _confirmations_to_make_withdrawal > _allowed_confirmations_deviation
+        ) {
+            emit WithdrawalCanceled(owner, blockNumber);
+            delete _pending_withdrawals[owner];
+        }
     }
 
     /**
@@ -97,7 +201,7 @@ contract GasMonetization is AccessControl {
         require(bytes(_projects[owner].metadataUri).length == 0, "GasMonetization: project exists");
         _projects[owner] = Project({
             metadataUri: metadataUri,
-            lastWithdrawnEpoch: 0,
+            lastWithdrawalBlock: 0,
             contracts: contracts
         });
         for (uint256 i = 0; i < contracts.length; ++i) {
@@ -199,6 +303,7 @@ contract GasMonetization is AccessControl {
     function addFunds() public payable {
         require(hasRole(FUNDER_ROLE, _msgSender()), "GasMonetization: not funder");
         require(msg.value > 0, "GasMonetization: no funds sent");
+        _last_block_funds_added = block.number;
         emit FundsAdded(_msgSender(), msg.value);
     }
 
@@ -222,6 +327,36 @@ contract GasMonetization is AccessControl {
         uint256 balance = address(this).balance;
         recipient.sendValue(balance);
         emit FundsWithdrawn(recipient, balance);
+    }
+
+    /**
+    * @notice Update withdrawal blocks frequency limit.
+    * @param limit New limit.
+    */
+    function updateWithdrawalBlocksFrequencyLimit(uint256 limit) public {
+        require(hasRole(DEFAULT_ADMIN_ROLE, _msgSender()), "GasMonetization: not admin");
+        _withdrawal_blocks_frequency_limit = limit;
+        emit WithdrawalBlockLimitUpdated(limit);
+    }
+
+    /**
+    * @notice Update withdrawal confirmations limit.
+    * @param limit New limit.
+    */
+    function updateWithdrawalConfirmationsLimit(uint256 limit) public {
+        require(hasRole(DEFAULT_ADMIN_ROLE, _msgSender()), "GasMonetization: not admin");
+        _confirmations_to_make_withdrawal = limit;
+        emit WithdrawalConfirmationsLimitUpdated(limit);
+    }
+
+    /**
+    * @notice Update withdrawal allowed confirmations deviation.
+    * @param limit New limit.
+    */
+    function updateWithdrawalAllowedConfirmationsDeviation(uint256 limit) public {
+        require(hasRole(DEFAULT_ADMIN_ROLE, _msgSender()), "GasMonetization: not admin");
+        _allowed_confirmations_deviation = limit;
+        emit WithdrawalConfirmationsDeviationUpdated(limit);
     }
 
     /**

@@ -1,8 +1,10 @@
-from brownie import reverts
+from brownie import reverts, chain
+from brownie.network.transaction import TransactionReceipt
 from brownie.test import given, strategy
 from brownie.network.contract import ProjectContract
 from brownie.network.account import LocalAccount
 from hypothesis import settings
+from typing import Callable
 
 
 def test_contract_can_be_funded(
@@ -11,12 +13,25 @@ def test_contract_can_be_funded(
 ) -> None:
     initial_contract_balance = gas_monetization.balance()
     initial_funder_balance = funder.balance()
-    tx: ProjectContract = gas_monetization.addFunds({'from': funder, 'amount': 1_000})
+    tx: TransactionReceipt = gas_monetization.addFunds({'from': funder, 'amount': 1_000})
     assert tx.events['FundsAdded'] is not None
     assert tx.events['FundsAdded']['funder'] == funder
     assert tx.events['FundsAdded']['amount'] == 1_000
     assert gas_monetization.balance() == initial_contract_balance + 1_000
     assert funder.balance() == initial_funder_balance - 1_000
+
+
+def test_last_block_funded_is_updated_on_funding(
+        gas_monetization: ProjectContract,
+        setup_gas_monetization_with_funds: Callable,
+        funder: LocalAccount
+) -> None:
+    setup_gas_monetization_with_funds()
+    last_bock_id = gas_monetization.getLastBlockFundsAdded()
+    # mine new blocks and fund contract
+    chain.mine(5)
+    gas_monetization.addFunds({'from': funder, 'amount': 1_000})
+    assert gas_monetization.getLastBlockFundsAdded() == last_bock_id + 5 + 1 # add 1 because funding is in its own block
 
 
 @given(non_funder=strategy('address'))
@@ -68,12 +83,14 @@ def test_non_funder_cannot_fund_contract_via_transfer(
 @settings(max_examples=10)
 def test_funds_can_be_withdrawn(
         gas_monetization: ProjectContract,
+        setup_gas_monetization_with_funds: Callable,
         funds_manager: LocalAccount,
         recipient: LocalAccount
 ) -> None:
+    setup_gas_monetization_with_funds()
     initial_contract_balance = gas_monetization.balance()
     initial_recipient_balance = recipient.balance()
-    tx: ProjectContract = gas_monetization.withdrawFunds(recipient, 1_000, {'from': funds_manager})
+    tx: TransactionReceipt = gas_monetization.withdrawFunds(recipient, 1_000, {'from': funds_manager})
     assert tx.events['FundsWithdrawn'] is not None
     assert tx.events['FundsWithdrawn']['recipient'] == recipient
     assert tx.events['FundsWithdrawn']['amount'] == 1_000
@@ -109,12 +126,14 @@ def test_more_funds_than_balance_cannot_be_withdrawn(
 @settings(max_examples=10)
 def test_all_funds_can_be_withdrawn(
         gas_monetization: ProjectContract,
+        setup_gas_monetization_with_funds: Callable,
         funds_manager: LocalAccount,
         recipient: LocalAccount
 ) -> None:
+    setup_gas_monetization_with_funds()
     initial_contract_balance = gas_monetization.balance()
     initial_recipient_balance = recipient.balance()
-    tx: ProjectContract = gas_monetization.withdrawAllFunds(recipient, {'from': funds_manager})
+    tx: TransactionReceipt = gas_monetization.withdrawAllFunds(recipient, {'from': funds_manager})
     assert tx.events['FundsWithdrawn'] is not None
     assert tx.events['FundsWithdrawn']['recipient'] == recipient
     assert tx.events['FundsWithdrawn']['amount'] == initial_contract_balance

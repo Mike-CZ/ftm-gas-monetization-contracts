@@ -1,28 +1,11 @@
-import pytest
 from brownie import reverts, ZERO_ADDRESS
+from brownie.network.transaction import TransactionReceipt
 from brownie.test import given, strategy
 from brownie.network.contract import ProjectContract
 from brownie.network.account import LocalAccount
 from hypothesis import settings
-from dataclasses import dataclass, field
 from typing import Callable
-
-@dataclass(frozen=True)
-class ProjectParams:
-    metadata_uri: str = "some-uri"
-    contracts = [
-        '0x8d6E92cff3E20f81C316CC09F97b77308dfc1EC5',
-        '0x6ecA1cC848c80936Bb3FECA348A82b51ca777067',
-        '0xCBA8bc188B3a0Ce2bA67bA40A4B1740D17aBc292'
-    ]
-
-@pytest.fixture(scope='module')
-def setup_project(gas_monetization: ProjectContract, projects_manager: LocalAccount) -> Callable:
-    def setup_project_(owner: LocalAccount) -> None:
-        gas_monetization.addProject(
-            owner, ProjectParams.metadata_uri, ProjectParams.contracts, {'from': projects_manager}
-        )
-    return setup_project_
+from utils.constants import ProjectParams
 
 
 @given(owner=strategy('address'))
@@ -32,7 +15,7 @@ def test_project_can_be_added(
         projects_manager: LocalAccount,
         owner: LocalAccount
 ) -> None:
-    tx: ProjectContract = gas_monetization.addProject(
+    tx: TransactionReceipt = gas_monetization.addProject(
         owner, ProjectParams.metadata_uri, ProjectParams.contracts, {'from': projects_manager}
     )
     assert tx.events['ProjectAdded'] is not None
@@ -42,7 +25,7 @@ def test_project_can_be_added(
     assert gas_monetization.getProjectMetadataUri(owner) == ProjectParams.metadata_uri
     assert gas_monetization.getProjectContracts(owner) == ProjectParams.contracts
     for addr in ProjectParams.contracts:
-        assert gas_monetization.getContractProjectOwner(addr) == owner
+        assert gas_monetization.getProjectContractOwner(addr) == owner
 
 
 @given(non_projects_manager=strategy('address'))
@@ -118,13 +101,13 @@ def test_project_can_be_removed(
         owner: LocalAccount
 ) -> None:
     setup_project(owner)
-    tx: ProjectContract = gas_monetization.removeProject(owner, {'from': projects_manager})
+    tx: TransactionReceipt = gas_monetization.removeProject(owner, {'from': projects_manager})
     assert tx.events['ProjectRemoved'] is not None
     assert tx.events['ProjectRemoved']['owner'] == owner
     assert gas_monetization.getProjectMetadataUri(owner) == ''
     assert gas_monetization.getProjectContracts(owner) == []
     for addr in ProjectParams.contracts:
-        assert gas_monetization.getContractProjectOwner(addr) == ZERO_ADDRESS
+        assert gas_monetization.getProjectContractOwner(addr) == ZERO_ADDRESS
 
 
 @given(
@@ -167,11 +150,11 @@ def test_project_contract_can_be_added(
 ) -> None:
     contract: str = '0xc41BE986CFb594156b08CFd272Cbf8FF52E4D2eD'
     setup_project(owner)
-    tx: ProjectContract = gas_monetization.addProjectContract(owner, contract, {'from': projects_manager})
+    tx: TransactionReceipt = gas_monetization.addProjectContract(owner, contract, {'from': projects_manager})
     assert tx.events['ProjectContractAdded'] is not None
     assert tx.events['ProjectContractAdded']['owner'] == owner
     assert tx.events['ProjectContractAdded']['contractAddress'] == contract
-    assert gas_monetization.getContractProjectOwner(contract) == owner
+    assert gas_monetization.getProjectContractOwner(contract) == owner
     assert contract in gas_monetization.getProjectContracts(owner)
 
 
@@ -229,11 +212,11 @@ def test_project_contract_can_be_removed(
         owner: LocalAccount
 ) -> None:
     setup_project(owner)
-    tx: ProjectContract = gas_monetization.removeProjectContract(owner, ProjectParams.contracts[0], {'from': projects_manager})
+    tx: TransactionReceipt = gas_monetization.removeProjectContract(owner, ProjectParams.contracts[0], {'from': projects_manager})
     assert tx.events['ProjectContractRemoved'] is not None
     assert tx.events['ProjectContractRemoved']['owner'] == owner
     assert tx.events['ProjectContractRemoved']['contractAddress'] == ProjectParams.contracts[0]
-    assert gas_monetization.getContractProjectOwner(ProjectParams.contracts[0]) == ZERO_ADDRESS
+    assert gas_monetization.getProjectContractOwner(ProjectParams.contracts[0]) == ZERO_ADDRESS
     assert gas_monetization.getProjectContracts(owner) == ProjectParams.contracts[1:]
 
 
@@ -294,14 +277,14 @@ def test_project_contracts_can_be_set(
     # add new contract to the list
     contracts.append('0xc41BE986CFb594156b08CFd272Cbf8FF52E4D2eD')
     setup_project(owner)
-    tx: ProjectContract = gas_monetization.setProjectContracts(owner, contracts, {'from': projects_manager})
+    tx: TransactionReceipt = gas_monetization.setProjectContracts(owner, contracts, {'from': projects_manager})
     assert tx.events['ProjectContractsSet'] is not None
     assert tx.events['ProjectContractsSet']['owner'] == owner
     assert tx.events['ProjectContractsSet']['contracts'] == contracts
     assert gas_monetization.getProjectContracts(owner) == contracts
     for addr in contracts:
-        assert gas_monetization.getContractProjectOwner(addr) == owner
-    assert gas_monetization.getContractProjectOwner(ProjectParams.contracts[0]) == ZERO_ADDRESS
+        assert gas_monetization.getProjectContractOwner(addr) == owner
+    assert gas_monetization.getProjectContractOwner(ProjectParams.contracts[0]) == ZERO_ADDRESS
 
 
 @given(
@@ -353,7 +336,7 @@ def test_project_metadata_uri_can_be_updated(
         owner: LocalAccount
 ) -> None:
     setup_project(owner)
-    tx: ProjectContract = gas_monetization.updateProjectMetadataUri(owner, 'new-uri', {'from': projects_manager})
+    tx: TransactionReceipt = gas_monetization.updateProjectMetadataUri(owner, 'new-uri', {'from': projects_manager})
     assert tx.events['ProjectMetadataUriUpdated'] is not None
     assert tx.events['ProjectMetadataUriUpdated']['owner'] == owner
     assert tx.events['ProjectMetadataUriUpdated']['metadataUri'] == 'new-uri'
