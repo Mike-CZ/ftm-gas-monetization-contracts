@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-pragma solidity ^0.8.0;
+pragma solidity ^0.8.1;
 
 import "openzeppelin/contracts/access/AccessControl.sol";
 import "openzeppelin/contracts/utils/Address.sol";
@@ -33,6 +33,7 @@ contract GasMonetization is AccessControl {
     * @notice Accounts with this role are eligible to fund this contract.
     */
     bytes32 public constant FUNDER_ROLE = keccak256("FUNDER");
+
     /**
     * @notice Accounts with this role are eligible to handle funds of this contract.
     */
@@ -59,32 +60,32 @@ contract GasMonetization is AccessControl {
     }
 
     /**
-    * @notice Registry of projects implemented as "project owner address" => "project" mapping.
+    * @dev Registry of projects implemented as "project owner address" => "project" mapping.
     */
     mapping(address => Project) internal _projects;
 
     /**
-    * @notice Registry of contracts and owners implemented as "contract address" => "contract owner address" mapping.
+    * @dev Registry of contracts and owners implemented as "contract address" => "contract owner address" mapping.
     */
     mapping(address => address) internal _contracts_owners;
 
     /**
-    * @notice Last block id when contract was funded.
+    * @dev Last block id when contract was funded.
     */
     uint256 internal _last_block_funds_added = 0;
 
     /**
-    * @notice Restricts withdrawals frequency by specified blocks number.
+    * @dev Restricts withdrawals frequency by specified blocks number.
     */
     uint256 internal _withdrawal_blocks_frequency_limit;
 
     /**
-    * @notice Number of confirmations to complete withdrawal.
+    * @dev Number of confirmations to complete withdrawal.
     */
     uint256 internal _confirmations_to_make_withdrawal;
 
     /**
-    * @notice Number of allowed deviated confirmations. When this number is exceeded, request is closed.
+    * @dev Number of allowed deviated confirmations. When this number is exceeded, request is closed.
     */
     uint256 internal _allowed_confirmations_deviation;
 
@@ -94,14 +95,21 @@ contract GasMonetization is AccessControl {
     struct PendingWithdrawalRequest {
         uint256 requestedOnBlock;
         uint256 receivedConfirmationsCount;
-        // Mapping of received confirmations implemented as "value to pay" => "number of confirmations"
-        mapping(uint256 => uint256) confirmations;
-        // Mapping of confirmation providers to avoid confirming by single address, "provider address" => "has provided"
-        mapping(address => bool) providers;
+        // Registry of addresses providing confirmations to prevent confirmations
+        // from single address. Implemented as "provider address" => "has provided".
+        mapping(address => bool) hasProvided;
+        // We also need to keep track of providers addresses to manually remove
+        // them from mapping, because deleting object won't affect nested mapping.
+        address[] providers;
+        // Registry of confirmed values and their count to process withdrawal
+        // after agreeing on particular value. Implemented as "value to withdraw" => "confirmations count".
+        mapping(uint256 => uint256) confirmedValuesCount;
+        // Same as "providers". Keep track of values.
+        uint256[] confirmedValues;
     }
 
     /**
-    * @notice Registry of pending withdrawals implemented as "project owner address" => "pending withdrawal" mapping.
+    * @dev Registry of pending withdrawals implemented as "project owner address" => "pending withdrawal" mapping.
     */
     mapping(address => PendingWithdrawalRequest) private _pending_withdrawals;
 
@@ -151,8 +159,8 @@ contract GasMonetization is AccessControl {
         );
         // cancel pending withdrawal
         if (lastPendingWithdrawal > 0) {
+            _cancelPendingWithdrawal(_msgSender());
             emit WithdrawalCanceled(_msgSender(), lastPendingWithdrawal);
-            delete _pending_withdrawals[_msgSender()];
         }
         // prepare new withdrawal
         _pending_withdrawals[_msgSender()].requestedOnBlock = block.number;
@@ -161,19 +169,28 @@ contract GasMonetization is AccessControl {
 
     /**
     * @notice Complete withdrawal.
+    * @param owner Address of project owner.
+    * @param blockNumber Number of block when request was made.
+    * @param amount Amount that owner should receive.
     */
     function completeWithdrawal(address payable owner, uint256 blockNumber, uint256 amount) public {
         require(hasRole(REWARDS_DATA_PROVIDER_ROLE, _msgSender()), "GasMonetization: not rewards data provider");
         require(hasPendingWithdrawal(owner, blockNumber), "GasMonetization: no withdrawal request");
+        require(amount > 0, "GasMonetization: no amount to withdraw");
         PendingWithdrawalRequest storage request = _pending_withdrawals[owner];
-        require(!request.providers[_msgSender()], "GasMonetization: already confirmed");
+        require(!request.hasProvided[_msgSender()], "GasMonetization: already confirmed");
         // record received confirmation and mark provider
         request.receivedConfirmationsCount++;
-        request.confirmations[amount]++;
-        request.providers[_msgSender()] = true;
+        request.providers.push(_msgSender());
+        request.hasProvided[_msgSender()] = true;
+        // if amount has not been provided yet, push it into list of values
+        if (request.confirmedValuesCount[amount] == 0) {
+            request.confirmedValues.push(amount);
+        }
+        request.confirmedValuesCount[amount]++;
         // make withdrawal when confirmations threshold is reached
-        if (request.confirmations[amount] >= _confirmations_to_make_withdrawal) {
-            delete _pending_withdrawals[owner];
+        if (request.confirmedValuesCount[amount] >= _confirmations_to_make_withdrawal) {
+            _cancelPendingWithdrawal(owner);
             _projects[owner].lastWithdrawalBlock = block.number;
             owner.sendValue(amount);
             emit WithdrawalCompleted(owner, blockNumber, amount);
@@ -184,8 +201,8 @@ contract GasMonetization is AccessControl {
             request.receivedConfirmationsCount > _confirmations_to_make_withdrawal
             && request.receivedConfirmationsCount - _confirmations_to_make_withdrawal > _allowed_confirmations_deviation
         ) {
+            _cancelPendingWithdrawal(owner);
             emit WithdrawalCanceled(owner, blockNumber);
-            delete _pending_withdrawals[owner];
         }
     }
 
@@ -364,5 +381,21 @@ contract GasMonetization is AccessControl {
     */
     receive() external payable {
         addFunds();
+    }
+
+    /**
+    * @dev Cancel pending withdrawal.
+    * @param owner Pending withdrawal owner.
+    */
+    function _cancelPendingWithdrawal(address owner) private {
+        PendingWithdrawalRequest storage request = _pending_withdrawals[owner];
+        // manually clear mappings
+        for (uint256 i = 0; i < request.confirmedValues.length; ++i) {
+            delete request.confirmedValuesCount[request.confirmedValues[i]];
+        }
+        for (uint256 i = 0; i < request.providers.length; ++i) {
+            delete request.hasProvided[request.providers[i]];
+        }
+        delete _pending_withdrawals[owner];
     }
 }

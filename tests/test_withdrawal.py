@@ -6,7 +6,7 @@ from brownie.network.contract import ProjectContract
 from brownie.network.account import LocalAccount
 from hypothesis import settings
 from typing import Callable
-from utils.constants import WITHDRAWAL_BLOCKS_LIMIT, WITHDRAWAL_CONFIRMATION, WITHDRAWAL_DEVIATION
+from utils.constants import WITHDRAWAL_BLOCKS_LIMIT, WITHDRAWAL_CONFIRMATION
 
 
 @pytest.fixture(scope='module')
@@ -22,6 +22,7 @@ def setup_withdrawal_request(
         return tx.block_number
 
     return setup_withdrawal_request_
+
 
 @given(owner=strategy('address'))
 @settings(max_examples=10)
@@ -109,6 +110,7 @@ def test_withdrawal_request_cannot_be_created_until_limit_is_reached(
     with reverts("GasMonetization: must wait to withdraw"):
         gas_monetization.requestWithdrawal({'from': owner})
 
+
 @given(owner=strategy('address'))
 @settings(max_examples=10)
 def test_withdrawal_request_cannot_be_created_until_last_withdrawal_limit_is_reached(
@@ -183,6 +185,35 @@ def test_withdrawal_can_be_completed(
     assert gas_monetization.hasPendingWithdrawal(owner, block_id) is False
 
 
+@given(owner=strategy('address'))
+@settings(max_examples=10)
+def test_multiple_withdrawals_can_be_completed(
+        gas_monetization: ProjectContract,
+        setup_gas_monetization_with_funds: Callable,
+        setup_project: Callable,
+        owner: LocalAccount,
+        funder: LocalAccount,
+        data_providers: list[LocalAccount]
+) -> None:
+    setup_gas_monetization_with_funds()
+    setup_project(owner)
+    # try to make 4 withdrawals in a row
+    for amount in [5_000, 10_000, 15_000, 20_000]:
+        owner_balance = owner.balance()
+        contract_balance = gas_monetization.balance()
+        tx: TransactionReceipt = gas_monetization.requestWithdrawal({'from': owner})
+        block_id = tx.block_number
+        for provider in data_providers[:WITHDRAWAL_CONFIRMATION]:
+            tx: TransactionReceipt = gas_monetization.completeWithdrawal(owner, block_id, amount, {'from': provider})
+        assert tx.events['WithdrawalCompleted'] is not None
+        assert owner.balance() == owner_balance + amount
+        assert gas_monetization.balance() == contract_balance - amount
+        assert gas_monetization.hasPendingWithdrawal(owner, block_id) is False
+        # mine new blocks and fund contract to fulfill conditions
+        chain.mine(WITHDRAWAL_BLOCKS_LIMIT)
+        gas_monetization.addFunds({'from': funder, 'amount': 10_000})
+
+
 @given(
     owner=strategy('address'),
     wannabe_provider=strategy('address')
@@ -226,6 +257,19 @@ def test_provider_cannot_complete_withdrawal_multiple_times(
     gas_monetization.completeWithdrawal(owner, block_id, amount, {'from': data_provider_1})
     with reverts("GasMonetization: already confirmed"):
         gas_monetization.completeWithdrawal(owner, block_id, amount, {'from': data_provider_1})
+
+
+@given(owner=strategy('address'))
+@settings(max_examples=10)
+def test_provider_cannot_complete_withdrawal_with_empty_amount(
+        gas_monetization: ProjectContract,
+        setup_withdrawal_request: Callable,
+        owner: LocalAccount,
+        data_provider_1: LocalAccount
+) -> None:
+    block_id = setup_withdrawal_request(owner)
+    with reverts("GasMonetization: no amount to withdraw"):
+        gas_monetization.completeWithdrawal(owner, block_id, 0, {'from': data_provider_1})
 
 
 @given(owner=strategy('address'))

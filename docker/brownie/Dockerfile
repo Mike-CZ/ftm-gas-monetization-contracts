@@ -12,7 +12,9 @@ RUN apt-get update \
     && apt-get install -y build-essential tk
 
 # Install brownie
-RUN python3 -m pip install --upgrade pip && pip3 install eth-brownie==1.19.3
+RUN python3 -m pip install --upgrade pip \
+    && pip3 install eth-brownie==1.19.3 \
+    && pip3 install mythril==0.23.16
 
 # Add non-root user
 RUN groupadd -g ${PGID} brownie \
