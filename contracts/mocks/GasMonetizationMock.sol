@@ -7,36 +7,23 @@ import "../GasMonetization.sol";
 
 contract GasMonetizationMock is GasMonetization {
     constructor(
-        uint256 withdrawalBlocksFrequencyLimit,
-        uint256 confirmationsToMakeWithdrawal,
-        uint256 allowedConfirmationsDeviation
-    ) GasMonetization(withdrawalBlocksFrequencyLimit, confirmationsToMakeWithdrawal, allowedConfirmationsDeviation) {}
+        address sfcAddress,
+        uint256 withdrawalEpochsFrequencyLimit
+    ) GasMonetization(sfcAddress, withdrawalEpochsFrequencyLimit) {}
 
-    function getLastBlockFundsAdded() public view returns(uint256) {
-        return _last_block_funds_added;
+    function getLastEpochFundsAdded() public view returns(uint256) {
+        return _last_epoch_funds_added;
     }
 
-    function getProjectMetadataUri(address owner) public view returns(string memory) {
-        return _projects[owner].metadataUri;
+    function getProjectMetadataUri(uint256 projectId) public view returns(string memory) {
+        return _projects[projectId].metadataUri;
     }
 
-    function getProjectContracts(address owner) public view returns(address[] memory) {
-        return _projects[owner].contracts;
+    function getProjectIdOfContract(address contractAddress) public view returns(uint256) {
+        return _contracts[contractAddress];
     }
 
-    function getProjectContractOwner(address contractAddress) public view returns(address) {
-        return _contracts_owners[contractAddress];
-    }
-
-    function getWithdrawalBlocksFrequencyLimit() public view returns(uint256) {
-        return _withdrawal_blocks_frequency_limit;
-    }
-
-    function getWithdrawalConfirmationsLimit() public view returns(uint256) {
-        return _confirmations_to_make_withdrawal;
-    }
-
-    function getWithdrawalAllowedConfirmationsDeviation() public view returns(uint256) {
-        return _allowed_confirmations_deviation;
+    function getWithdrawalEpochsFrequencyLimit() public view returns(uint256) {
+        return _withdrawal_epochs_frequency_limit;
     }
 }
