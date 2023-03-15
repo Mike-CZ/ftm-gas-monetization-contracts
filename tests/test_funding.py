@@ -1,4 +1,4 @@
-from brownie import reverts, chain
+from brownie import reverts
 from brownie.network.transaction import TransactionReceipt
 from brownie.test import given, strategy
 from brownie.network.contract import ProjectContract
@@ -24,14 +24,15 @@ def test_contract_can_be_funded(
 def test_last_block_funded_is_updated_on_funding(
         gas_monetization: ProjectContract,
         setup_gas_monetization_with_funds: Callable,
+        set_epoch_number: Callable,
         funder: LocalAccount
 ) -> None:
     setup_gas_monetization_with_funds()
-    last_bock_id = gas_monetization.getLastBlockFundsAdded()
-    # mine new blocks and fund contract
-    chain.mine(5)
+    last_epoch_id = gas_monetization.getLastEpochFundsAdded()
+    # move forward with epochs
+    set_epoch_number(10)
     gas_monetization.addFunds({'from': funder, 'amount': 1_000})
-    assert gas_monetization.getLastBlockFundsAdded() == last_bock_id + 5 + 1 # add 1 because funding is in its own block
+    assert gas_monetization.getLastEpochFundsAdded() == last_epoch_id + 10
 
 
 @given(non_funder=strategy('address'))

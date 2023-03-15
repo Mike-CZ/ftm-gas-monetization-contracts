@@ -5,20 +5,20 @@ from brownie.network.transaction import TransactionReceipt
 from brownie.test import given, strategy
 from hypothesis import settings
 
-def test_withdrawal_block_limit_can_be_updated(
+def test_withdrawal_epoch_limit_can_be_updated(
         gas_monetization: ProjectContract,
         admin: LocalAccount
 ) -> None:
     new_limit = 5_000
-    tx: TransactionReceipt = gas_monetization.updateWithdrawalBlocksFrequencyLimit(new_limit, {'from': admin})
-    assert tx.events['WithdrawalBlockLimitUpdated'] is not None
-    assert tx.events['WithdrawalBlockLimitUpdated']['limit'] == new_limit
-    assert gas_monetization.getWithdrawalBlocksFrequencyLimit() == new_limit
+    tx: TransactionReceipt = gas_monetization.updateWithdrawalEpochsFrequencyLimit(new_limit, {'from': admin})
+    assert tx.events['WithdrawalEpochsLimitUpdated'] is not None
+    assert tx.events['WithdrawalEpochsLimitUpdated']['limit'] == new_limit
+    assert gas_monetization.getWithdrawalEpochsFrequencyLimit() == new_limit
 
 
 @given(wannabe_admin=strategy('address'))
 @settings(max_examples=10)
-def test_non_admin_cannot_update_withdrawal_block_limit(
+def test_non_admin_cannot_update_withdrawal_epoch_limit(
         gas_monetization: ProjectContract,
         admin: LocalAccount,
         wannabe_admin: LocalAccount
@@ -26,7 +26,7 @@ def test_non_admin_cannot_update_withdrawal_block_limit(
     if wannabe_admin.address == admin.address:
         return
     with reverts('GasMonetization: not admin'):
-        gas_monetization.updateWithdrawalBlocksFrequencyLimit(5_000, {'from': wannabe_admin})
+        gas_monetization.updateWithdrawalEpochsFrequencyLimit(5_000, {'from': wannabe_admin})
 
 
 def test_withdrawal_confirmation_limit_can_be_updated(
@@ -53,25 +53,31 @@ def test_non_admin_cannot_update_confirmation_limit(
         gas_monetization.updateWithdrawalConfirmationsLimit(5, {'from': wannabe_admin})
 
 
-def test_withdrawal_deviation_can_be_updated(
-        gas_monetization: ProjectContract,
-        admin: LocalAccount
-) -> None:
-    new_limit = 0
-    tx: TransactionReceipt = gas_monetization.updateWithdrawalAllowedConfirmationsDeviation(new_limit, {'from': admin})
-    assert tx.events['WithdrawalConfirmationsDeviationUpdated'] is not None
-    assert tx.events['WithdrawalConfirmationsDeviationUpdated']['limit'] == new_limit
-    assert gas_monetization.getWithdrawalAllowedConfirmationsDeviation() == new_limit
-
-
-@given(wannabe_admin=strategy('address'))
+@given(sfc_address=strategy('address'))
 @settings(max_examples=10)
-def test_non_admin_cannot_update_deviation(
+def test_sfc_address_can_be_updated(
         gas_monetization: ProjectContract,
         admin: LocalAccount,
-        wannabe_admin: LocalAccount
+        sfc_address: LocalAccount
+) -> None:
+    tx: TransactionReceipt = gas_monetization.updateSfcAddress(sfc_address, {'from': admin})
+    assert tx.events['SfcAddressUpdated'] is not None
+    assert tx.events['SfcAddressUpdated']['sfcAddress'] == sfc_address
+    assert gas_monetization.getSfcAddress() == sfc_address
+
+
+@given(
+    wannabe_admin=strategy('address'),
+    sfc_address=strategy('address')
+)
+@settings(max_examples=10)
+def test_non_admin_cannot_update_sfc_address(
+        gas_monetization: ProjectContract,
+        admin: LocalAccount,
+        wannabe_admin: LocalAccount,
+        sfc_address: LocalAccount
 ) -> None:
     if wannabe_admin.address == admin.address:
         return
     with reverts('GasMonetization: not admin'):
-        gas_monetization.updateWithdrawalAllowedConfirmationsDeviation(0, {'from': wannabe_admin})
+        gas_monetization.updateSfcAddress(sfc_address, {'from': wannabe_admin})

@@ -1,13 +1,12 @@
 from dataclasses import dataclass
 
-# set lower limit to make tests run faster
-WITHDRAWAL_BLOCKS_LIMIT = 10
+WITHDRAWAL_EPOCHS_LIMIT = 10
 # withdrawal confirmation must not be greater than number of data providers created in conftest.py
 WITHDRAWAL_CONFIRMATION = 3
-WITHDRAWAL_DEVIATION = 1
 
 @dataclass(frozen=True)
 class ProjectParams:
+    project_id: int = 1
     metadata_uri: str = "some-uri"
     contracts = [
         '0x8d6E92cff3E20f81C316CC09F97b77308dfc1EC5',

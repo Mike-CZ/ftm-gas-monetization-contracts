@@ -12,7 +12,8 @@ contract GasMonetization is AccessControl {
 
     event FundsAdded(address indexed funder, uint256 amount);
     event FundsWithdrawn(address indexed recipient, uint256 amount);
-    event ProjectAdded(uint256 indexed projectId,
+    event ProjectAdded(
+        uint256 indexed projectId,
         address indexed owner,
         address indexed rewardsRecipient,
         string metadataUri,
@@ -30,7 +31,13 @@ contract GasMonetization is AccessControl {
     event WithdrawalCanceled(uint256 indexed projectId, uint256 requestEpochNumber);
     event WithdrawalCompleted(uint256 indexed projectId, uint256 withdrawalEpochNumber, uint256 amount);
     event WithdrawalEpochsLimitUpdated(uint256 limit);
-    event ContractDeployed(address sfcAddress, uint256 withdrawalEpochsFrequencyLimit);
+    event WithdrawalConfirmationsLimitUpdated(uint256 limit);
+    event SfcAddressUpdated(address sfcAddress);
+    event ContractDeployed(
+        address sfcAddress,
+        uint256 withdrawalEpochsFrequencyLimit,
+        uint256 confirmationsToMakeWithdrawal
+    );
 
     /**
     * @notice Accounts with this role are eligible to fund this contract.
@@ -87,9 +94,19 @@ contract GasMonetization is AccessControl {
     uint256 internal _withdrawal_epochs_frequency_limit;
 
     /**
+    * @dev Restricts how many confirmations we need to obtain make withdrawal.
+    */
+    uint256 internal _confirmations_to_make_withdrawal;
+
+    /**
     * @dev Internal counter for identifiers of projects.
     */
     uint256 internal _last_project_id = 0;
+
+    /**
+    * @dev Sfc contract used for obtaining current epoch.
+    */
+    ISfc internal _sfc;
 
     /**
     * @notice PendingWithdrawalRequest represents a pending withdrawal of a project.
@@ -106,11 +123,6 @@ contract GasMonetization is AccessControl {
     mapping(uint256 => PendingWithdrawalRequest) private _pending_withdrawals;
 
     /**
-    * @dev Sfc contract used for obtaining current epoch.
-    */
-    ISfc private _sfc;
-
-    /**
     * @notice Contract constructor. It assigns to the creator admin role. Addresses with `DEFAULT_ADMIN_ROLE`
     * are eligible to grant and revoke memberships in particular roles.
     * @param sfcAddress Address of SFC contract.
@@ -118,12 +130,14 @@ contract GasMonetization is AccessControl {
     */
     constructor(
         address sfcAddress,
-        uint256 withdrawalEpochsFrequencyLimit
+        uint256 withdrawalEpochsFrequencyLimit,
+        uint256 confirmationsToMakeWithdrawal
     ) public {
         _sfc = ISfc(sfcAddress);
         _withdrawal_epochs_frequency_limit = withdrawalEpochsFrequencyLimit;
+        _confirmations_to_make_withdrawal = confirmationsToMakeWithdrawal;
         _grantRole(DEFAULT_ADMIN_ROLE, _msgSender());
-        emit ContractDeployed(sfcAddress, withdrawalEpochsFrequencyLimit);
+        emit ContractDeployed(sfcAddress, withdrawalEpochsFrequencyLimit, confirmationsToMakeWithdrawal);
     }
 
     /**
@@ -290,7 +304,7 @@ contract GasMonetization is AccessControl {
     * @param projectId Id of project.
     * @param recipient Address of recipient.
     */
-    function updateProjectRewardsRecipien(uint256 projectId, address recipient) external {
+    function updateProjectRewardsRecipient(uint256 projectId, address recipient) external {
         require(_projects[projectId].owner == _msgSender(), "GasMonetization: not project owner");
         _projects[projectId].rewardsReceiver = recipient;
         emit ProjectRewardsRecipientUpdated(projectId, recipient);
@@ -303,6 +317,7 @@ contract GasMonetization is AccessControl {
     */
     function updateProjectOwner(uint256 projectId, address owner) external {
         require(hasRole(PROJECTS_MANAGER_ROLE, _msgSender()), "GasMonetization: not projects manager");
+        require(_projects[projectId].owner != address(0), "GasMonetization: project does not exist");
         _projects[projectId].owner = owner;
         emit ProjectOwnerUpdated(projectId, owner);
     }
@@ -347,6 +362,26 @@ contract GasMonetization is AccessControl {
         require(hasRole(DEFAULT_ADMIN_ROLE, _msgSender()), "GasMonetization: not admin");
         _withdrawal_epochs_frequency_limit = limit;
         emit WithdrawalEpochsLimitUpdated(limit);
+    }
+
+    /**
+    * @notice Update withdrawal confirmations limit.
+    * @param limit New limit.
+    */
+    function updateWithdrawalConfirmationsLimit(uint256 limit) public {
+        require(hasRole(DEFAULT_ADMIN_ROLE, _msgSender()), "GasMonetization: not admin");
+        _confirmations_to_make_withdrawal = limit;
+        emit WithdrawalConfirmationsLimitUpdated(limit);
+    }
+
+    /**
+    * @notice Update sfc address.
+    * @param sfc New sfc address.
+    */
+    function updateSfcAddress(address sfc) external {
+        require(hasRole(DEFAULT_ADMIN_ROLE, _msgSender()), "GasMonetization: not admin");
+        _sfc = ISfc(sfc);
+        emit SfcAddressUpdated(sfc);
     }
 
     /**
