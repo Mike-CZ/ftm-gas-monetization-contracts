@@ -11,10 +11,7 @@ compiler:
 
 reports:
     exclude_contracts:
-        - ERC20
-        - Ownable
-        - Context
-        - ERC721
-        - ERC721URIStorage
+        - AccessControl
+        - Address
 
 autofetch_sources: true

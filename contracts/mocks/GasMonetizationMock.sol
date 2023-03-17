@@ -7,36 +7,64 @@ import "../GasMonetization.sol";
 
 contract GasMonetizationMock is GasMonetization {
     constructor(
-        uint256 withdrawalBlocksFrequencyLimit,
-        uint256 confirmationsToMakeWithdrawal,
-        uint256 allowedConfirmationsDeviation
-    ) GasMonetization(withdrawalBlocksFrequencyLimit, confirmationsToMakeWithdrawal, allowedConfirmationsDeviation) {}
+        address sfcAddress,
+        uint256 withdrawalEpochsFrequencyLimit,
+        uint256 confirmationsToMakeWithdrawal
+    ) GasMonetization(sfcAddress, withdrawalEpochsFrequencyLimit, confirmationsToMakeWithdrawal) {}
 
-    function getLastBlockFundsAdded() public view returns(uint256) {
-        return _last_block_funds_added;
+    function getLastEpochFundsAdded() public view returns(uint256) {
+        return _last_epoch_funds_added;
     }
 
-    function getProjectMetadataUri(address owner) public view returns(string memory) {
-        return _projects[owner].metadataUri;
+    function getProjectOwner(uint256 projectId) public view returns(address) {
+        return _projects[projectId].owner;
     }
 
-    function getProjectContracts(address owner) public view returns(address[] memory) {
-        return _projects[owner].contracts;
+    function getProjectRewardsRecipient(uint256 projectId) public view returns(address) {
+        return _projects[projectId].rewardsRecipient;
     }
 
-    function getProjectContractOwner(address contractAddress) public view returns(address) {
-        return _contracts_owners[contractAddress];
+    function getProjectMetadataUri(uint256 projectId) public view returns(string memory) {
+        return _projects[projectId].metadataUri;
     }
 
-    function getWithdrawalBlocksFrequencyLimit() public view returns(uint256) {
-        return _withdrawal_blocks_frequency_limit;
+    function getProjectActiveFromEpoch(uint256 projectId) public view returns(uint256) {
+        return _projects[projectId].activeFromEpoch;
+    }
+
+    function getProjectActiveToEpoch(uint256 projectId) public view returns(uint256) {
+        return _projects[projectId].activeToEpoch;
+    }
+
+    function getProjectIdOfContract(address contractAddress) public view returns(uint256) {
+        return _contracts[contractAddress];
+    }
+
+    function getPendingRequestConfirmationsEpochId(uint256 projectId) public view returns(uint256) {
+        return _pending_withdrawals[projectId].requestedOnEpoch;
+    }
+
+    function getPendingRequestConfirmationsCount(uint256 projectId) public view returns(uint256) {
+        return _pending_withdrawals[projectId].receivedConfirmationsCount;
+    }
+
+    function getPendingRequestConfirmationsValue(uint256 projectId) public view returns(uint256) {
+        return _pending_withdrawals[projectId].receivedConfirmationValue;
+    }
+
+    function getPendingRequestConfirmationsProviders(uint256 projectId) public view returns(address[] memory) {
+        return _pending_withdrawals[projectId].providers;
+    }
+
+    function getWithdrawalEpochsFrequencyLimit() public view returns(uint256) {
+        return _withdrawal_epochs_frequency_limit;
     }
 
     function getWithdrawalConfirmationsLimit() public view returns(uint256) {
         return _confirmations_to_make_withdrawal;
     }
 
-    function getWithdrawalAllowedConfirmationsDeviation() public view returns(uint256) {
-        return _allowed_confirmations_deviation;
+    function getSfcAddress() public view returns(address) {
+        return address(_sfc);
     }
 }

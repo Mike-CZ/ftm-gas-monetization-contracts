@@ -8,24 +8,33 @@ from typing import Callable
 from utils.constants import ProjectParams
 
 
-@given(owner=strategy('address'))
+@given(
+    owner=strategy('address'),
+    rewards_recipient=strategy('address')
+)
 @settings(max_examples=10)
 def test_project_can_be_added(
         gas_monetization: ProjectContract,
+        sfc: ProjectContract,
         projects_manager: LocalAccount,
-        owner: LocalAccount
+        owner: LocalAccount,
+        rewards_recipient: LocalAccount
 ) -> None:
     tx: TransactionReceipt = gas_monetization.addProject(
-        owner, ProjectParams.metadata_uri, ProjectParams.contracts, {'from': projects_manager}
+        owner, rewards_recipient, ProjectParams.metadata_uri, ProjectParams.contracts, {'from': projects_manager}
     )
     assert tx.events['ProjectAdded'] is not None
+    assert tx.events['ProjectAdded']['projectId'] == ProjectParams.project_id
     assert tx.events['ProjectAdded']['owner'] == owner
+    assert tx.events['ProjectAdded']['rewardsRecipient'] == rewards_recipient
     assert tx.events['ProjectAdded']['metadataUri'] == ProjectParams.metadata_uri
+    assert tx.events['ProjectAdded']['activeFromEpoch'] == sfc.currentEpoch()
     assert tx.events['ProjectAdded']['contracts'] == ProjectParams.contracts
-    assert gas_monetization.getProjectMetadataUri(owner) == ProjectParams.metadata_uri
-    assert gas_monetization.getProjectContracts(owner) == ProjectParams.contracts
+    assert gas_monetization.getProjectOwner(ProjectParams.project_id) == owner
+    assert gas_monetization.getProjectRewardsRecipient(ProjectParams.project_id) == rewards_recipient
+    assert gas_monetization.getProjectMetadataUri(ProjectParams.project_id) == ProjectParams.metadata_uri
     for addr in ProjectParams.contracts:
-        assert gas_monetization.getProjectContractOwner(addr) == owner
+        assert gas_monetization.getProjectIdOfContract(addr) == ProjectParams.project_id
 
 
 @given(non_projects_manager=strategy('address'))
@@ -39,40 +48,31 @@ def test_non_project_manager_cannot_add_project(
         return
     with reverts("GasMonetization: not projects manager"):
         gas_monetization.addProject(
-            non_projects_manager, ProjectParams.metadata_uri, ProjectParams.contracts, {'from': non_projects_manager}
-        )
-
-
-@given(owner=strategy('address'))
-@settings(max_examples=10)
-def test_project_cannot_be_added_with_empty_metadata(
-        gas_monetization: ProjectContract,
-        projects_manager: LocalAccount,
-        owner: LocalAccount
-) -> None:
-    with reverts("GasMonetization: empty metadata uri"):
-        gas_monetization.addProject(
-            owner, '', ProjectParams.contracts, {'from': projects_manager}
-        )
-
-
-@given(owner=strategy('address'))
-@settings(max_examples=10)
-def test_project_cannot_be_added_when_already_exists(
-        gas_monetization: ProjectContract,
-        setup_project: Callable,
-        projects_manager: LocalAccount,
-        owner: LocalAccount
-) -> None:
-    setup_project(owner)
-    with reverts("GasMonetization: project exists"):
-        gas_monetization.addProject(
-            owner, ProjectParams.metadata_uri, ProjectParams.contracts, {'from': projects_manager}
+            non_projects_manager, non_projects_manager, ProjectParams.metadata_uri,
+            ProjectParams.contracts, {'from': non_projects_manager}
         )
 
 
 @given(
     owner=strategy('address'),
+    rewards_recipient=strategy('address')
+)
+@settings(max_examples=10)
+def test_project_cannot_be_added_with_empty_metadata(
+        gas_monetization: ProjectContract,
+        projects_manager: LocalAccount,
+        owner: LocalAccount,
+        rewards_recipient: LocalAccount
+) -> None:
+    with reverts("GasMonetization: empty metadata uri"):
+        gas_monetization.addProject(
+            owner, rewards_recipient, '', ProjectParams.contracts, {'from': projects_manager}
+        )
+
+
+@given(
+    owner=strategy('address'),
+    rewards_recipient=strategy('address'),
     wannabe_owner=strategy('address')
 )
 @settings(max_examples=10)
@@ -81,85 +81,189 @@ def test_project_cannot_be_added_when_contract_already_registered(
         setup_project: Callable,
         projects_manager: LocalAccount,
         owner: LocalAccount,
+        rewards_recipient: LocalAccount,
         wannabe_owner: LocalAccount
 ) -> None:
-    if owner.address == wannabe_owner.address:
-        return
-    setup_project(owner)
+    setup_project(owner, rewards_recipient)
     with reverts("GasMonetization: contract already registered"):
         gas_monetization.addProject(
-            wannabe_owner, ProjectParams.metadata_uri, ProjectParams.contracts[1:], {'from': projects_manager}
+            wannabe_owner, wannabe_owner, ProjectParams.metadata_uri,
+            ProjectParams.contracts[1:], {'from': projects_manager}
         )
-
-
-@given(owner=strategy('address'))
-@settings(max_examples=10)
-def test_project_can_be_removed(
-        gas_monetization: ProjectContract,
-        setup_project: Callable,
-        projects_manager: LocalAccount,
-        owner: LocalAccount
-) -> None:
-    setup_project(owner)
-    tx: TransactionReceipt = gas_monetization.removeProject(owner, {'from': projects_manager})
-    assert tx.events['ProjectRemoved'] is not None
-    assert tx.events['ProjectRemoved']['owner'] == owner
-    assert gas_monetization.getProjectMetadataUri(owner) == ''
-    assert gas_monetization.getProjectContracts(owner) == []
-    for addr in ProjectParams.contracts:
-        assert gas_monetization.getProjectContractOwner(addr) == ZERO_ADDRESS
 
 
 @given(
     owner=strategy('address'),
+    rewards_recipient=strategy('address')
+)
+@settings(max_examples=10)
+def test_project_can_be_suspended(
+        gas_monetization: ProjectContract,
+        setup_project: Callable,
+        set_epoch_number: Callable,
+        projects_manager: LocalAccount,
+        owner: LocalAccount,
+        rewards_recipient: LocalAccount
+) -> None:
+    setup_project(owner, rewards_recipient)
+    set_epoch_number(50)
+    tx: TransactionReceipt = gas_monetization.suspendProject(ProjectParams.project_id, {'from': projects_manager})
+    assert tx.events['ProjectSuspended'] is not None
+    assert tx.events['ProjectSuspended']['projectId'] == ProjectParams.project_id
+    assert tx.events['ProjectSuspended']['suspendedOnEpochNumber'] == 50
+    assert gas_monetization.getProjectActiveToEpoch(ProjectParams.project_id) == 50
+
+
+@given(
+    owner=strategy('address'),
+    rewards_recipient=strategy('address'),
     non_projects_manager=strategy('address')
 )
 @settings(max_examples=10)
-def test_non_project_manager_cannot_remove_project(
+def test_non_project_manager_cannot_suspend_project(
         gas_monetization: ProjectContract,
         setup_project: Callable,
         projects_manager: LocalAccount,
         non_projects_manager: LocalAccount,
-        owner: LocalAccount
+        owner: LocalAccount,
+        rewards_recipient: LocalAccount
 ) -> None:
     if projects_manager.address == non_projects_manager.address:
         return
-    setup_project(owner)
+    setup_project(owner, rewards_recipient)
     with reverts("GasMonetization: not projects manager"):
-        gas_monetization.removeProject(owner, {'from': non_projects_manager})
+        gas_monetization.suspendProject(ProjectParams.project_id, {'from': non_projects_manager})
 
 
-@given(owner=strategy('address'))
-@settings(max_examples=10)
-def test_non_existing_project_cannot_be_removed(
+def test_non_existing_project_cannot_be_suspended(
         gas_monetization: ProjectContract,
-        projects_manager: LocalAccount,
-        owner: LocalAccount
+        projects_manager: LocalAccount
 ) -> None:
     with reverts("GasMonetization: project does not exist"):
-        gas_monetization.removeProject(owner, {'from': projects_manager})
+        gas_monetization.suspendProject(ProjectParams.project_id, {'from': projects_manager})
 
 
-@given(owner=strategy('address'))
+@given(
+    owner=strategy('address'),
+    rewards_recipient=strategy('address')
+)
+@settings(max_examples=10)
+def test_suspended_project_cannot_be_suspended(
+        gas_monetization: ProjectContract,
+        setup_project: Callable,
+        set_epoch_number: Callable,
+        projects_manager: LocalAccount,
+        owner: LocalAccount,
+        rewards_recipient: LocalAccount
+) -> None:
+    setup_project(owner, rewards_recipient)
+    set_epoch_number(50)
+    gas_monetization.suspendProject(ProjectParams.project_id, {'from': projects_manager})
+    with reverts("GasMonetization: project suspended"):
+        gas_monetization.suspendProject(ProjectParams.project_id, {'from': projects_manager})
+
+
+@given(
+    owner=strategy('address'),
+    rewards_recipient=strategy('address')
+)
+@settings(max_examples=10)
+def test_project_can_be_enabled(
+        gas_monetization: ProjectContract,
+        setup_project: Callable,
+        set_epoch_number: Callable,
+        projects_manager: LocalAccount,
+        owner: LocalAccount,
+        rewards_recipient: LocalAccount
+) -> None:
+    setup_project(owner, rewards_recipient)
+    set_epoch_number(50)
+    gas_monetization.suspendProject(ProjectParams.project_id, {'from': projects_manager})
+    set_epoch_number(100)
+    tx: TransactionReceipt = gas_monetization.enableProject(ProjectParams.project_id, {'from': projects_manager})
+    assert tx.events['ProjectEnabled'] is not None
+    assert tx.events['ProjectEnabled']['projectId'] == ProjectParams.project_id
+    assert tx.events['ProjectEnabled']['enabledOnEpochNumber'] == 100
+    assert gas_monetization.getProjectActiveFromEpoch(ProjectParams.project_id) == 100
+    assert gas_monetization.getProjectActiveToEpoch(ProjectParams.project_id) == 0
+
+
+@given(
+    owner=strategy('address'),
+    rewards_recipient=strategy('address'),
+    non_projects_manager=strategy('address')
+)
+@settings(max_examples=10)
+def test_non_project_manager_cannot_enable_project(
+        gas_monetization: ProjectContract,
+        setup_project: Callable,
+        set_epoch_number: Callable,
+        projects_manager: LocalAccount,
+        owner: LocalAccount,
+        rewards_recipient: LocalAccount,
+        non_projects_manager: LocalAccount
+) -> None:
+    if projects_manager.address == non_projects_manager.address:
+        return
+    setup_project(owner, rewards_recipient)
+    set_epoch_number(50)
+    gas_monetization.suspendProject(ProjectParams.project_id, {'from': projects_manager})
+    set_epoch_number(100)
+    with reverts("GasMonetization: not projects manager"):
+        gas_monetization.enableProject(ProjectParams.project_id, {'from': non_projects_manager})
+
+
+def test_non_existing_project_cannot_be_enabled(
+        gas_monetization: ProjectContract,
+        projects_manager: LocalAccount
+) -> None:
+    with reverts("GasMonetization: project does not exist"):
+        gas_monetization.enableProject(ProjectParams.project_id, {'from': projects_manager})
+
+
+@given(
+    owner=strategy('address'),
+    rewards_recipient=strategy('address')
+)
+@settings(max_examples=10)
+def test_active_project_cannot_be_enabled(
+        gas_monetization: ProjectContract,
+        setup_project: Callable,
+        projects_manager: LocalAccount,
+        owner: LocalAccount,
+        rewards_recipient: LocalAccount,
+) -> None:
+    setup_project(owner, rewards_recipient)
+    with reverts("GasMonetization: project active"):
+        gas_monetization.enableProject(ProjectParams.project_id, {'from': projects_manager})
+
+
+@given(
+    owner=strategy('address'),
+    rewards_recipient=strategy('address')
+)
 @settings(max_examples=10)
 def test_project_contract_can_be_added(
         gas_monetization: ProjectContract,
         setup_project: Callable,
         projects_manager: LocalAccount,
-        owner: LocalAccount
+        owner: LocalAccount,
+        rewards_recipient: LocalAccount
 ) -> None:
     contract: str = '0xc41BE986CFb594156b08CFd272Cbf8FF52E4D2eD'
-    setup_project(owner)
-    tx: TransactionReceipt = gas_monetization.addProjectContract(owner, contract, {'from': projects_manager})
+    setup_project(owner, rewards_recipient)
+    tx: TransactionReceipt = gas_monetization.addProjectContract(
+        ProjectParams.project_id, contract, {'from': projects_manager}
+    )
     assert tx.events['ProjectContractAdded'] is not None
-    assert tx.events['ProjectContractAdded']['owner'] == owner
+    assert tx.events['ProjectContractAdded']['projectId'] == ProjectParams.project_id
     assert tx.events['ProjectContractAdded']['contractAddress'] == contract
-    assert gas_monetization.getProjectContractOwner(contract) == owner
-    assert contract in gas_monetization.getProjectContracts(owner)
+    assert gas_monetization.getProjectIdOfContract(contract) == ProjectParams.project_id
 
 
 @given(
     owner=strategy('address'),
+    rewards_recipient=strategy('address'),
     non_projects_manager=strategy('address')
 )
 @settings(max_examples=10)
@@ -168,60 +272,70 @@ def test_non_project_manager_cannot_add_project_contract(
         setup_project: Callable,
         projects_manager: LocalAccount,
         non_projects_manager: LocalAccount,
-        owner: LocalAccount
+        owner: LocalAccount,
+        rewards_recipient: LocalAccount
 ) -> None:
     if projects_manager.address == non_projects_manager.address:
         return
     contract: str = '0xc41BE986CFb594156b08CFd272Cbf8FF52E4D2eD'
-    setup_project(owner)
+    setup_project(owner, rewards_recipient)
     with reverts("GasMonetization: not projects manager"):
-        gas_monetization.addProjectContract(owner, contract, {'from': non_projects_manager})
+        gas_monetization.addProjectContract(ProjectParams.project_id, contract, {'from': non_projects_manager})
 
 
-@given(owner=strategy('address'))
-@settings(max_examples=10)
 def test_cannot_add_project_contract_when_project_does_not_exist(
         gas_monetization: ProjectContract,
-        projects_manager: LocalAccount,
-        owner: LocalAccount
+        projects_manager: LocalAccount
 ) -> None:
     contract: str = '0xc41BE986CFb594156b08CFd272Cbf8FF52E4D2eD'
     with reverts("GasMonetization: project does not exist"):
-        gas_monetization.addProjectContract(owner, contract, {'from': projects_manager})
+        gas_monetization.addProjectContract(ProjectParams.project_id, contract, {'from': projects_manager})
 
 
-@given(owner=strategy('address'))
+@given(
+    owner=strategy('address'),
+    rewards_recipient=strategy('address')
+)
 @settings(max_examples=10)
 def test_cannot_add_project_contract_when_contract_already_registered(
         gas_monetization: ProjectContract,
         setup_project: Callable,
         projects_manager: LocalAccount,
-        owner: LocalAccount
+        owner: LocalAccount,
+        rewards_recipient: LocalAccount
 ) -> None:
-    setup_project(owner)
+    setup_project(owner, rewards_recipient)
     with reverts("GasMonetization: contract already registered"):
-        gas_monetization.addProjectContract(owner, ProjectParams.contracts[0], {'from': projects_manager})
+        gas_monetization.addProjectContract(
+            ProjectParams.project_id, ProjectParams.contracts[0], {'from': projects_manager}
+        )
 
 
-@given(owner=strategy('address'))
+@given(
+    owner=strategy('address'),
+    rewards_recipient=strategy('address')
+)
 @settings(max_examples=10)
 def test_project_contract_can_be_removed(
         gas_monetization: ProjectContract,
         setup_project: Callable,
         projects_manager: LocalAccount,
-        owner: LocalAccount
+        owner: LocalAccount,
+        rewards_recipient: LocalAccount
 ) -> None:
-    setup_project(owner)
-    tx: TransactionReceipt = gas_monetization.removeProjectContract(owner, ProjectParams.contracts[0], {'from': projects_manager})
+    setup_project(owner, rewards_recipient)
+    tx: TransactionReceipt = gas_monetization.removeProjectContract(
+        ProjectParams.project_id, ProjectParams.contracts[0], {'from': projects_manager}
+    )
     assert tx.events['ProjectContractRemoved'] is not None
-    assert tx.events['ProjectContractRemoved']['owner'] == owner
+    assert tx.events['ProjectContractRemoved']['projectId'] == ProjectParams.project_id
     assert tx.events['ProjectContractRemoved']['contractAddress'] == ProjectParams.contracts[0]
-    assert gas_monetization.getProjectContractOwner(ProjectParams.contracts[0]) == ZERO_ADDRESS
-    assert gas_monetization.getProjectContracts(owner) == ProjectParams.contracts[1:]
+    assert gas_monetization.getProjectIdOfContract(ProjectParams.contracts[0]) == 0
 
 
 @given(
     owner=strategy('address'),
+    rewards_recipient=strategy('address'),
     non_projects_manager=strategy('address')
 )
 @settings(max_examples=10)
@@ -230,121 +344,70 @@ def test_non_project_manager_cannot_remove_project_contract(
         setup_project: Callable,
         projects_manager: LocalAccount,
         non_projects_manager: LocalAccount,
-        owner: LocalAccount
+        owner: LocalAccount,
+        rewards_recipient: LocalAccount
 ) -> None:
     if projects_manager.address == non_projects_manager.address:
         return
-    setup_project(owner)
+    setup_project(owner, rewards_recipient)
     with reverts("GasMonetization: not projects manager"):
-        gas_monetization.removeProjectContract(owner, ProjectParams.contracts[0], {'from': non_projects_manager})
+        gas_monetization.removeProjectContract(
+            ProjectParams.project_id, ProjectParams.contracts[0], {'from': non_projects_manager}
+        )
 
 
-@given(owner=strategy('address'))
-@settings(max_examples=10)
 def test_cannot_remove_project_contract_when_project_does_not_exist(
         gas_monetization: ProjectContract,
-        projects_manager: LocalAccount,
-        owner: LocalAccount
+        projects_manager: LocalAccount
 ) -> None:
     with reverts("GasMonetization: project does not exist"):
-        gas_monetization.removeProjectContract(owner, ProjectParams.contracts[0], {'from': projects_manager})
+        gas_monetization.removeProjectContract(
+            ProjectParams.project_id, ProjectParams.contracts[0], {'from': projects_manager}
+        )
 
 
-@given(owner=strategy('address'))
+@given(
+    owner=strategy('address'),
+    rewards_recipient=strategy('address')
+)
 @settings(max_examples=10)
 def test_cannot_remove_project_contract_when_contract_not_registered(
         gas_monetization: ProjectContract,
         setup_project: Callable,
         projects_manager: LocalAccount,
-        owner: LocalAccount
+        owner: LocalAccount,
+        rewards_recipient: LocalAccount
 ) -> None:
     contract: str = '0xc41BE986CFb594156b08CFd272Cbf8FF52E4D2eD'
-    setup_project(owner)
+    setup_project(owner, rewards_recipient)
     with reverts("GasMonetization: contract not registered"):
-        gas_monetization.removeProjectContract(owner, contract, {'from': projects_manager})
-
-
-@given(owner=strategy('address'))
-@settings(max_examples=10)
-def test_project_contracts_can_be_set(
-        gas_monetization: ProjectContract,
-        setup_project: Callable,
-        projects_manager: LocalAccount,
-        owner: LocalAccount
-) -> None:
-    # create list of contracts without the first one - it will be checked that this contract got removed
-    contracts: list[str] = ProjectParams.contracts[1:]
-    # add new contract to the list
-    contracts.append('0xc41BE986CFb594156b08CFd272Cbf8FF52E4D2eD')
-    setup_project(owner)
-    tx: TransactionReceipt = gas_monetization.setProjectContracts(owner, contracts, {'from': projects_manager})
-    assert tx.events['ProjectContractsSet'] is not None
-    assert tx.events['ProjectContractsSet']['owner'] == owner
-    assert tx.events['ProjectContractsSet']['contracts'] == contracts
-    assert gas_monetization.getProjectContracts(owner) == contracts
-    for addr in contracts:
-        assert gas_monetization.getProjectContractOwner(addr) == owner
-    assert gas_monetization.getProjectContractOwner(ProjectParams.contracts[0]) == ZERO_ADDRESS
-
+        gas_monetization.removeProjectContract(ProjectParams.project_id, contract, {'from': projects_manager})
 
 @given(
     owner=strategy('address'),
-    non_projects_manager=strategy('address')
+    rewards_recipient=strategy('address')
 )
-@settings(max_examples=10)
-def test_non_project_manager_cannot_set_project_contracts(
-        gas_monetization: ProjectContract,
-        setup_project: Callable,
-        projects_manager: LocalAccount,
-        non_projects_manager: LocalAccount,
-        owner: LocalAccount
-) -> None:
-    if projects_manager.address == non_projects_manager.address:
-        return
-    contracts: list[str] = ProjectParams.contracts[1:]
-    contracts.append('0xc41BE986CFb594156b08CFd272Cbf8FF52E4D2eD')
-    setup_project(owner)
-    with reverts("GasMonetization: not projects manager"):
-        gas_monetization.setProjectContracts(owner, contracts, {'from': non_projects_manager})
-
-
-@given(
-    owner=strategy('address'),
-    wannabe_owner=strategy('address')
-)
-@settings(max_examples=10)
-def test_set_project_contracts_when_already_registered(
-        gas_monetization: ProjectContract,
-        setup_project: Callable,
-        projects_manager: LocalAccount,
-        owner: LocalAccount,
-        wannabe_owner: LocalAccount
-) -> None:
-    if owner.address == wannabe_owner.address:
-        return
-    setup_project(owner)
-    with reverts("GasMonetization: project already registered"):
-        gas_monetization.setProjectContracts(wannabe_owner, ProjectParams.contracts[0:2], {'from': projects_manager})
-
-
-@given(owner=strategy('address'))
 @settings(max_examples=10)
 def test_project_metadata_uri_can_be_updated(
         gas_monetization: ProjectContract,
         setup_project: Callable,
         projects_manager: LocalAccount,
-        owner: LocalAccount
+        owner: LocalAccount,
+        rewards_recipient: LocalAccount
 ) -> None:
-    setup_project(owner)
-    tx: TransactionReceipt = gas_monetization.updateProjectMetadataUri(owner, 'new-uri', {'from': projects_manager})
+    setup_project(owner, rewards_recipient)
+    tx: TransactionReceipt = gas_monetization.updateProjectMetadataUri(
+        ProjectParams.project_id, 'new-uri', {'from': projects_manager}
+    )
     assert tx.events['ProjectMetadataUriUpdated'] is not None
-    assert tx.events['ProjectMetadataUriUpdated']['owner'] == owner
+    assert tx.events['ProjectMetadataUriUpdated']['projectId'] == ProjectParams.project_id
     assert tx.events['ProjectMetadataUriUpdated']['metadataUri'] == 'new-uri'
-    assert gas_monetization.getProjectMetadataUri(owner) == 'new-uri'
+    assert gas_monetization.getProjectMetadataUri(ProjectParams.project_id) == 'new-uri'
 
 
 @given(
     owner=strategy('address'),
+    rewards_recipient=strategy('address'),
     non_projects_manager=strategy('address')
 )
 @settings(max_examples=10)
@@ -353,34 +416,137 @@ def test_non_project_manager_cannot_update_project_metadata_uri(
         setup_project: Callable,
         projects_manager: LocalAccount,
         non_projects_manager: LocalAccount,
-        owner: LocalAccount
+        owner: LocalAccount,
+        rewards_recipient: LocalAccount
 ) -> None:
     if projects_manager.address == non_projects_manager.address:
         return
-    setup_project(owner)
+    setup_project(owner, rewards_recipient)
     with reverts("GasMonetization: not projects manager"):
-        gas_monetization.updateProjectMetadataUri(owner, 'new-uri', {'from': non_projects_manager})
+        gas_monetization.updateProjectMetadataUri(ProjectParams.project_id, 'new-uri', {'from': non_projects_manager})
 
 
-@given(owner=strategy('address'))
-@settings(max_examples=10)
 def test_cannot_update_project_metadata_uri_when_project_does_not_exist(
         gas_monetization: ProjectContract,
-        projects_manager: LocalAccount,
-        owner: LocalAccount
+        projects_manager: LocalAccount
 ) -> None:
     with reverts("GasMonetization: project does not exist"):
-        gas_monetization.updateProjectMetadataUri(owner, 'new-uri', {'from': projects_manager})
+        gas_monetization.updateProjectMetadataUri(ProjectParams.project_id, 'new-uri', {'from': projects_manager})
 
 
-@given(owner=strategy('address'))
+@given(
+    owner=strategy('address'),
+    rewards_recipient=strategy('address')
+)
 @settings(max_examples=10)
 def test_cannot_update_project_metadata_uri_when_is_empty(
         gas_monetization: ProjectContract,
         setup_project: Callable,
         projects_manager: LocalAccount,
-        owner: LocalAccount
+        owner: LocalAccount,
+        rewards_recipient: LocalAccount
 ) -> None:
-    setup_project(owner)
+    setup_project(owner, rewards_recipient)
     with reverts("GasMonetization: empty metadata uri"):
-        gas_monetization.updateProjectMetadataUri(owner, '', {'from': projects_manager})
+        gas_monetization.updateProjectMetadataUri(ProjectParams.project_id, '', {'from': projects_manager})
+
+
+@given(
+    owner=strategy('address'),
+    rewards_recipient=strategy('address'),
+    new_rewards_recipient=strategy('address')
+)
+@settings(max_examples=10)
+def test_project_rewards_recipient_can_be_updated(
+        gas_monetization: ProjectContract,
+        setup_project: Callable,
+        owner: LocalAccount,
+        rewards_recipient: LocalAccount,
+        new_rewards_recipient: LocalAccount
+) -> None:
+    setup_project(owner, rewards_recipient)
+    tx: TransactionReceipt = gas_monetization.updateProjectRewardsRecipient(
+        ProjectParams.project_id, new_rewards_recipient, {'from': owner}
+    )
+    assert tx.events['ProjectRewardsRecipientUpdated'] is not None
+    assert tx.events['ProjectRewardsRecipientUpdated']['projectId'] == ProjectParams.project_id
+    assert tx.events['ProjectRewardsRecipientUpdated']['recipient'] == new_rewards_recipient
+    assert gas_monetization.getProjectRewardsRecipient(ProjectParams.project_id) == new_rewards_recipient
+
+
+@given(
+    owner=strategy('address'),
+    rewards_recipient=strategy('address'),
+    non_owner=strategy('address')
+)
+@settings(max_examples=10)
+def test_non_owner_cannot_change_rewards_recipient(
+        gas_monetization: ProjectContract,
+        setup_project: Callable,
+        owner: LocalAccount,
+        rewards_recipient: LocalAccount,
+        non_owner: LocalAccount
+) -> None:
+    if owner.address == non_owner.address:
+        return
+    setup_project(owner, rewards_recipient)
+    with reverts('GasMonetization: not project owner'):
+        gas_monetization.updateProjectRewardsRecipient(ProjectParams.project_id, non_owner, {'from': non_owner})
+
+
+@given(
+    owner=strategy('address'),
+    rewards_recipient=strategy('address'),
+    new_owner=strategy('address')
+)
+@settings(max_examples=10)
+def test_project_owner_can_be_updated(
+        gas_monetization: ProjectContract,
+        setup_project: Callable,
+        projects_manager: LocalAccount,
+        owner: LocalAccount,
+        rewards_recipient: LocalAccount,
+        new_owner: LocalAccount
+) -> None:
+    setup_project(owner, rewards_recipient)
+    tx: TransactionReceipt = gas_monetization.updateProjectOwner(
+        ProjectParams.project_id, new_owner, {'from': projects_manager}
+    )
+    assert tx.events['ProjectOwnerUpdated'] is not None
+    assert tx.events['ProjectOwnerUpdated']['projectId'] == ProjectParams.project_id
+    assert tx.events['ProjectOwnerUpdated']['owner'] == new_owner
+    assert gas_monetization.getProjectOwner(ProjectParams.project_id) == new_owner
+
+
+@given(
+    owner=strategy('address'),
+    rewards_recipient=strategy('address'),
+    new_owner=strategy('address'),
+    non_projects_manager=strategy('address')
+)
+@settings(max_examples=10)
+def test_non_project_manager_cannot_update_project_owner(
+        gas_monetization: ProjectContract,
+        setup_project: Callable,
+        projects_manager: LocalAccount,
+        non_projects_manager: LocalAccount,
+        owner: LocalAccount,
+        new_owner: LocalAccount,
+        rewards_recipient: LocalAccount
+) -> None:
+    if projects_manager.address == non_projects_manager.address:
+        return
+    setup_project(owner, rewards_recipient)
+    with reverts("GasMonetization: not projects manager"):
+        gas_monetization.updateProjectOwner(ProjectParams.project_id, new_owner, {'from': non_projects_manager})
+
+
+@given(new_owner=strategy('address'))
+def test_cannot_update_project_owner_when_project_does_not_exist(
+        gas_monetization: ProjectContract,
+        projects_manager: LocalAccount,
+        new_owner: LocalAccount
+) -> None:
+    with reverts("GasMonetization: project does not exist"):
+        gas_monetization.updateProjectOwner(ProjectParams.project_id, new_owner, {'from': projects_manager})
+
