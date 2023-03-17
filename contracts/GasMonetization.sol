@@ -28,8 +28,18 @@ contract GasMonetization is AccessControl {
     event ProjectRewardsRecipientUpdated(uint256 indexed projectId, address recipient);
     event ProjectOwnerUpdated(uint256 indexed projectId, address owner);
     event WithdrawalRequested(uint256 indexed projectId, uint256 requestEpochNumber);
-    event WithdrawalCanceled(uint256 indexed projectId, uint256 requestEpochNumber);
-    event WithdrawalCompleted(uint256 indexed projectId, uint256 withdrawalEpochNumber, uint256 amount);
+    event WithdrawalCompleted(
+        uint256 indexed projectId,
+        uint256 requestEpochNumber,
+        uint256 withdrawalEpochNumber,
+        uint256 amount
+    );
+    event InvalidWithdrawalAmount(
+        uint256 indexed projectId,
+        uint256 withdrawalEpochNumber,
+        uint256 amount,
+        uint256 diffAmount
+    );
     event WithdrawalEpochsLimitUpdated(uint256 limit);
     event WithdrawalConfirmationsLimitUpdated(uint256 limit);
     event SfcAddressUpdated(address sfcAddress);
@@ -65,7 +75,7 @@ contract GasMonetization is AccessControl {
     */
     struct Project {
         address owner;
-        address rewardsReceiver;
+        address rewardsRecipient;
         string metadataUri;
         uint256 lastWithdrawalEpoch;
         uint256 activeFromEpoch;
@@ -84,9 +94,9 @@ contract GasMonetization is AccessControl {
     mapping(address => uint256) internal _contracts;
 
     /**
-    * @dev Last epoch id when contract was funded.
+    * @dev Sfc contract used for obtaining current epoch.
     */
-    uint256 internal _last_epoch_funds_added = 0;
+    ISfc internal _sfc;
 
     /**
     * @dev Restricts withdrawals frequency by specified epochs number.
@@ -104,9 +114,9 @@ contract GasMonetization is AccessControl {
     uint256 internal _last_project_id = 0;
 
     /**
-    * @dev Sfc contract used for obtaining current epoch.
+    * @dev Last epoch id when contract was funded.
     */
-    ISfc internal _sfc;
+    uint256 internal _last_epoch_funds_added = 0;
 
     /**
     * @notice PendingWithdrawalRequest represents a pending withdrawal of a project.
@@ -115,12 +125,19 @@ contract GasMonetization is AccessControl {
         uint256 requestedOnEpoch;
         uint256 receivedConfirmationsCount;
         uint256 receivedConfirmationValue;
+        // Array of providers to prevent obtaining confirmations from single address.
+        // Mapping can not be used, because it won't get deleted when request is deleted.
+        // From solidity docs (https://docs.soliditylang.org/en/develop/types.html#delete):
+        // Delete has no effect on whole mappings (as the keys of mappings may be arbitrary and are generally unknown).
+        // So if you delete a struct, it will reset all members that are not mappings and also recurse into the members
+        // unless they are mappings. However, individual keys and what they map to can be deleted.
+        address[] providers;
     }
 
     /**
     * @dev Registry of pending withdrawals implemented as "project id" => "pending withdrawal" mapping.
     */
-    mapping(uint256 => PendingWithdrawalRequest) private _pending_withdrawals;
+    mapping(uint256 => PendingWithdrawalRequest) internal _pending_withdrawals;
 
     /**
     * @notice Contract constructor. It assigns to the creator admin role. Addresses with `DEFAULT_ADMIN_ROLE`
@@ -156,8 +173,13 @@ contract GasMonetization is AccessControl {
     function requestWithdrawal(uint256 projectId) external {
         require(_projects[projectId].owner == _msgSender(), "GasMonetization: not owner");
         require(_pending_withdrawals[projectId].requestedOnEpoch == 0, "GasMonetization: has pending withdrawal");
-        uint256 lastProjectWithdrawal = _projects[projectId].lastWithdrawalEpoch;
+        require(
+            _projects[projectId].activeToEpoch == 0
+            || _projects[projectId].lastWithdrawalEpoch < _projects[projectId].activeToEpoch,
+            "GasMonetization: project disabled"
+        );
         uint256 currentEpoch = _sfc.currentEpoch();
+        uint256 lastProjectWithdrawal = _projects[projectId].lastWithdrawalEpoch;
         require(
             _last_epoch_funds_added > 0
             && lastProjectWithdrawal < _last_epoch_funds_added
@@ -180,33 +202,42 @@ contract GasMonetization is AccessControl {
         require(hasPendingWithdrawal(projectId, epochNumber), "GasMonetization: no withdrawal request");
         require(amount > 0, "GasMonetization: no amount to withdraw");
         PendingWithdrawalRequest storage request = _pending_withdrawals[projectId];
-        // assert we obtained same amount
+        // set amount when it is first confirmation
         if (request.receivedConfirmationsCount == 0) {
             request.receivedConfirmationValue = amount;
-        } else {
-            require(request.receivedConfirmationValue == amount, "GasMonetization: amount mismatch");
+        } else if (request.receivedConfirmationValue != amount) {
+            // otherwise if amount is different, invalidate data we obtained so far
+            // and emit event, so next attempt can be made
+            emit InvalidWithdrawalAmount(projectId, epochNumber, request.receivedConfirmationValue, amount);
+            delete _pending_withdrawals[projectId];
+            request.requestedOnEpoch = epochNumber;
+            return;
         }
+        // validate that provider has not already provided data
+        for (uint256 i = 0; i < request.providers.length; ++i) {
+            require(request.providers[i] != _msgSender(), "GasMonetization: already provided");
+        }
+        request.providers.push(_msgSender());
         request.receivedConfirmationsCount++;
-
-        // TODO: handle when reward should be sent
-
-        delete _pending_withdrawals[projectId];
-        _projects[projectId].lastWithdrawalEpoch = _sfc.currentEpoch();
-        payable(_projects[projectId].rewardsReceiver).sendValue(amount);
-        emit WithdrawalCompleted(projectId, epochNumber, amount);
-
+        // send amount if confirmations threshold is reached and delete request
+        if (request.receivedConfirmationsCount >= _confirmations_to_make_withdrawal) {
+            delete _pending_withdrawals[projectId];
+            _projects[projectId].lastWithdrawalEpoch = _sfc.currentEpoch();
+            payable(_projects[projectId].rewardsRecipient).sendValue(amount);
+            emit WithdrawalCompleted(projectId, epochNumber, _projects[projectId].lastWithdrawalEpoch, amount);
+        }
     }
 
     /**
     * @notice Add project into registry.
     * @param owner Address of project owner.
-    * @param rewardsReceiver Address of rewards receiver.
+    * @param rewardsRecipient Address of rewards receiver.
     * @param metadataUri Uri of project's metadata.
     * @param contracts Array of related contracts.
     */
     function addProject(
         address owner,
-        address rewardsReceiver,
+        address rewardsRecipient,
         string calldata metadataUri,
         address[] calldata contracts
     ) external {
@@ -215,7 +246,7 @@ contract GasMonetization is AccessControl {
         _last_project_id++;
         _projects[_last_project_id] = Project({
             owner: owner,
-            rewardsReceiver: rewardsReceiver,
+            rewardsRecipient: rewardsRecipient,
             metadataUri: metadataUri,
             lastWithdrawalEpoch: 0,
             activeFromEpoch: _sfc.currentEpoch(),
@@ -228,7 +259,7 @@ contract GasMonetization is AccessControl {
         emit ProjectAdded(
             _last_project_id,
             _projects[_last_project_id].owner,
-            _projects[_last_project_id].rewardsReceiver,
+            _projects[_last_project_id].rewardsRecipient,
             _projects[_last_project_id].metadataUri,
             _projects[_last_project_id].activeFromEpoch,
             contracts
@@ -306,7 +337,7 @@ contract GasMonetization is AccessControl {
     */
     function updateProjectRewardsRecipient(uint256 projectId, address recipient) external {
         require(_projects[projectId].owner == _msgSender(), "GasMonetization: not project owner");
-        _projects[projectId].rewardsReceiver = recipient;
+        _projects[projectId].rewardsRecipient = recipient;
         emit ProjectRewardsRecipientUpdated(projectId, recipient);
     }
 

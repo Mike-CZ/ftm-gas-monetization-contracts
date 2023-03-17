@@ -98,10 +98,13 @@ def gas_monetization(
 @pytest.fixture(scope="module")
 def setup_gas_monetization_with_funds(
         gas_monetization: ProjectContract,
+        sfc: ProjectContract,
         funder: LocalAccount,
+        admin: LocalAccount
 ) -> Callable:
-    def setup_gas_monetization_with_funds_(initial_funds: int = Wei("1 ether")) -> None:
+    def setup_gas_monetization_with_funds_(initial_funds: int = Wei("1 ether"), epoch: int = 100) -> None:
         if initial_funds > 0:
+            sfc.setEpoch(epoch, {'from': admin})
             gas_monetization.addFunds({'from': funder, 'amount': initial_funds})
     return setup_gas_monetization_with_funds_
 

@@ -21,7 +21,7 @@ contract GasMonetizationMock is GasMonetization {
     }
 
     function getProjectRewardsRecipient(uint256 projectId) public view returns(address) {
-        return _projects[projectId].rewardsReceiver;
+        return _projects[projectId].rewardsRecipient;
     }
 
     function getProjectMetadataUri(uint256 projectId) public view returns(string memory) {
@@ -38,6 +38,22 @@ contract GasMonetizationMock is GasMonetization {
 
     function getProjectIdOfContract(address contractAddress) public view returns(uint256) {
         return _contracts[contractAddress];
+    }
+
+    function getPendingRequestConfirmationsEpochId(uint256 projectId) public view returns(uint256) {
+        return _pending_withdrawals[projectId].requestedOnEpoch;
+    }
+
+    function getPendingRequestConfirmationsCount(uint256 projectId) public view returns(uint256) {
+        return _pending_withdrawals[projectId].receivedConfirmationsCount;
+    }
+
+    function getPendingRequestConfirmationsValue(uint256 projectId) public view returns(uint256) {
+        return _pending_withdrawals[projectId].receivedConfirmationValue;
+    }
+
+    function getPendingRequestConfirmationsProviders(uint256 projectId) public view returns(address[] memory) {
+        return _pending_withdrawals[projectId].providers;
     }
 
     function getWithdrawalEpochsFrequencyLimit() public view returns(uint256) {
