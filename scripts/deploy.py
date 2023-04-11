@@ -19,6 +19,7 @@ def main():
     sfc_address = click.prompt('Insert SFC address', value_proc=validate_eth_address)
     epochs_limit = click.prompt('Insert epochs limit to make withdrawal', type=click.IntRange(min=1))
     confirmations = click.prompt('Insert number of confirmations to make withdrawal', type=click.IntRange(min=1))
+    publish = click.prompt('Publish source for validation? (API key must be exported)', type=click.BOOL)
 
     click.echo(
         f"""
@@ -32,7 +33,7 @@ def main():
     if not click.confirm("Deploy GasMonetization"):
         return
 
-    GasMonetization.deploy(sfc_address, epochs_limit, confirmations, {'from': account})
+    GasMonetization.deploy(sfc_address, epochs_limit, confirmations, {'from': account}, publish_source=publish)
 
     click.echo("GasMonetization successfully deployed")
 
